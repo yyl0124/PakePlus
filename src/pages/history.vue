@@ -36,7 +36,7 @@
             <el-table-column :label="t('assetName')">
                 <template #default="scope">
                     <div style="display: flex; align-items: center">
-                        <span @click="copyDownlink(scope.row)" class="fileLink">
+                        <span class="fileLink">
                             {{
                                 scope.row.name.startsWith('_')
                                     ? store.currentProject.showName +
@@ -44,15 +44,39 @@
                                     : scope.row.name
                             }}
                         </span>
+                        <el-progress
+                            v-if="
+                                downProcess[`${scope.row.id}`] &&
+                                downProcess[`${scope.row.id}`] < 100
+                            "
+                            :percentage="downProcess[`${scope.row.id}`]"
+                        />
+                        <el-icon
+                            class="folderOpen"
+                            @click="openUrl(selectedDir)"
+                            v-else-if="
+                                downProcess[`${scope.row.id}`] &&
+                                downProcess[`${scope.row.id}`] === 100
+                            "
+                        >
+                            <Folder />
+                        </el-icon>
                         <span
+                            v-else
                             class="copyLink"
-                            @click="openUrl(scope.row.browser_download_url)"
+                            @click="downAssets(scope.row)"
                         >
                             {{ t('download') }}
                         </span>
                     </div>
                 </template>
             </el-table-column>
+            <!-- download progress -->
+            <!-- <el-table-column label="下载进度" width="120">
+                <template #default="scope">
+                    <el-progress :percentage="downProcess[`${scope.row.id}`]" />
+                </template>
+            </el-table-column> -->
             <!-- url code -->
             <el-table-column :label="t('urlCode')" width="140" align="center">
                 <template #default="scope">
@@ -143,13 +167,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePPStore } from '@/store'
-import { ArrowLeft, Delete } from '@element-plus/icons-vue'
+import { ArrowLeft, Delete, Folder } from '@element-plus/icons-vue'
 import githubApi from '@/apis/github'
-import { openUrl, isTauri, copyText, oneMessage } from '@/utils/common'
+import {
+    openUrl,
+    isTauri,
+    copyText,
+    oneMessage,
+    openSelect,
+} from '@/utils/common'
 import { useI18n } from 'vue-i18n'
+import { basename, join } from '@tauri-apps/api/path'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 const router = useRouter()
 const store = usePPStore()
@@ -208,6 +241,35 @@ const deleteRelAssets = async () => {
 const copyDownlink = async (asset: any) => {
     await copyText(asset.browser_download_url)
     oneMessage.success(t('copySuccess'))
+}
+
+// 多文件下载进度
+const downProcess = reactive<{ [key: string]: number }>({})
+listen('download_progress', (event: any) => {
+    downProcess[event.payload.fileId] = Number(
+        ((event.payload.downloaded / event.payload.total) * 100).toFixed(2)
+    )
+    console.log('downProcess---------', downProcess)
+})
+
+// download file
+let selectedDir: any = ref('')
+const downAssets = async (asset: any) => {
+    selectedDir.value = await openSelect(true, [])
+    if (!selectedDir.value) {
+        return
+    }
+    const fileId = `${asset.id}`
+    const url = asset.browser_download_url
+    const fileName = await basename(url)
+    const savePath = await join(selectedDir.value, fileName)
+    console.log('fileName, savePath', fileName, savePath)
+    downProcess[fileId] = 0.01
+    invoke('download_file', {
+        url,
+        savePath,
+        fileId,
+    })
 }
 
 onMounted(async () => {
@@ -333,6 +395,15 @@ onMounted(async () => {
         text-decoration: underline;
         text-decoration-color: #0969da;
         text-underline-offset: 1px;
+    }
+}
+
+.folderOpen {
+    margin-left: 10px;
+    cursor: pointer;
+    &:hover {
+        color: #1163c1;
+        font-weight: bold;
     }
 }
 

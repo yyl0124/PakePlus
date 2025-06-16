@@ -206,7 +206,7 @@ export default {
     buildTips: '编译中请不要做任何操作...',
     zipFile: '压缩包',
     unknown: '未知',
-    pubPhoneTips: '注：打包发布大概需要3分钟左右，请耐心等待...',
+    pubPhoneTips: '注：移动端打包发布大概需要3分钟左右，请耐心等待...',
     cantDelete: '不可以删除',
     deleteSuccess: '删除成功',
     confirmDelete: '确定要删除吗？',

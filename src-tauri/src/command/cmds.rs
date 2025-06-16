@@ -1,12 +1,24 @@
 use crate::command::model::find_port;
 use crate::command::model::ServerState;
 use base64::prelude::*;
+use futures::StreamExt;
+use reqwest::Client;
+use serde::Serialize;
+use std::fs::File;
 use std::io::Read;
+use std::io::Write;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tauri::{path::BaseDirectory, utils::config::WindowConfig, AppHandle, LogicalSize, Manager};
+use tauri::{
+    path::BaseDirectory, utils::config::WindowConfig, AppHandle, Emitter, LogicalSize, Manager,
+};
 use tauri_plugin_http::reqwest;
+use walkdir::WalkDir;
 use warp::Filter;
+use zip::write::FileOptions;
+use zip::ZipArchive;
+use zip::ZipWriter;
 
 #[tauri::command]
 pub async fn start_server(
@@ -505,11 +517,108 @@ pub fn get_machine_uid() -> String {
     uid
 }
 
+fn zip_folder(src_path: &str, dst_path: &str) -> std::io::Result<()> {
+    let file = File::create(dst_path)?;
+    let mut zip = ZipWriter::new(file);
+    print!("src_path = {src_path}");
+    print!("dst_path = {dst_path}");
+    let options: FileOptions<()> =
+        FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    let src_path = Path::new(src_path);
+    let walkdir = WalkDir::new(src_path);
+    let it = walkdir.into_iter();
+
+    for entry in it.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let name = path.strip_prefix(src_path).unwrap().to_str().unwrap();
+
+        if path.is_file() {
+            zip.start_file(name, options)?;
+            let mut f = File::open(path)?;
+            std::io::copy(&mut f, &mut zip)?;
+        } else if !name.is_empty() {
+            zip.add_directory(name, options)?;
+        }
+    }
+
+    zip.finish()?;
+    Ok(())
+}
+
+fn unzip_file(src_path: &str, dst_path: &str) -> std::io::Result<()> {
+    let file = File::open(src_path)?;
+    let mut archive = ZipArchive::new(file)?;
+    let dst_path = Path::new(dst_path);
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let outpath = dst_path.join(file.mangled_name());
+
+        if file.name().ends_with('/') {
+            std::fs::create_dir_all(&outpath)?;
+        } else {
+            if let Some(p) = outpath.parent() {
+                if !p.exists() {
+                    std::fs::create_dir_all(p)?;
+                }
+            }
+            let mut outfile = File::create(&outpath)?;
+            std::io::copy(&mut file, &mut outfile)?;
+        }
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
-pub fn get_os_info() -> String {
-    // "windows", "linux", "macos"
-    let os = std::env::consts::OS;
-    // "x86", "x86_64", "arm", "aarch64"
-    let arch = std::env::consts::ARCH;
-    format!("{}-{}", os, arch)
+pub async fn compress_folder(source: String, destination: String) -> Result<(), String> {
+    println!("source = {source}");
+    println!("destination = {destination}");
+    zip_folder(&source, &destination).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn decompress_file(source: String, destination: String) -> Result<(), String> {
+    unzip_file(&source, &destination).map_err(|e| e.to_string())
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress {
+    file_id: String,
+    downloaded: u64,
+    total: u64,
+}
+
+#[tauri::command]
+pub async fn download_file(
+    app: AppHandle,
+    url: String,
+    save_path: String,
+    file_id: String,
+) -> Result<(), String> {
+    let client = Client::new();
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+
+    let total_size = resp.content_length();
+    let mut stream = resp.bytes_stream();
+    let mut file = File::create(&save_path).map_err(|e| e.to_string())?;
+    let mut downloaded: u64 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+        app.emit(
+            "download_progress",
+            DownloadProgress {
+                file_id: file_id.clone(),
+                downloaded,
+                total: total_size.unwrap_or(0),
+            },
+        )
+        .unwrap();
+    }
+    Ok(())
 }

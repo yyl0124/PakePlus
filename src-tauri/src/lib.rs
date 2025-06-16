@@ -63,7 +63,9 @@ pub fn run() {
             command::cmds::stop_server,
             command::cmds::support_pp,
             command::cmds::get_machine_uid,
-            command::cmds::get_os_info,
+            command::cmds::compress_folder,
+            command::cmds::decompress_file,
+            command::cmds::download_file,
         ])
         .setup(|app| {
             tauri::async_runtime::block_on(async move {

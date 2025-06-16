@@ -223,11 +223,11 @@ export const replaceFileRoot = async (file: string, rootPath: string) => {
 }
 
 // Open a selection dialog for image files
-export const openSelect = async (filters: any) => {
+export const openSelect = async (directory: boolean = true, filters: any) => {
     const selected = await open({
-        directory: true,
+        directory,
         multiple: false,
-        filters: filters,
+        filters,
     })
     return selected
 }
@@ -262,6 +262,7 @@ export const isTauri = (window as any).__TAURI__ ? true : false
 
 // 打开url
 export const openUrl = async (url: string) => {
+    console.log('url', url)
     if (isTauri) {
         await invoke('open_url', { url })
     } else {
